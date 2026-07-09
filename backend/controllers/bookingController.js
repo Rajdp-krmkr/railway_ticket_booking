@@ -1,129 +1,171 @@
 // ==========================================================
-// BOOKING CONTROLLER (DUMMY/PLACEHOLDER)
+// BOOKING CONTROLLER (MYSQL DIRECT INTEGRATION)
 // ==========================================================
 
-// TODO:
-// Fetch data from RailwayDB and modify tables
-// Replace this in-memory list with database queries.
+const db = require('../config/db');
 
-const { mockTrains } = require('./trainController');
-
-// In-memory bookings registry to allow live interactions during review
-let mockBookings = [
-  {
-    id: 'B1001',
-    pnr: '4829104829',
-    trainId: 'T101',
-    trainName: 'Rajdhani Express',
-    trainNumber: '12429',
-    source: 'New Delhi (NDLS)',
-    destination: 'Mumbai Central (MMCT)',
-    passengerName: 'John Passenger',
-    passengerAge: 32,
-    passengerGender: 'Male',
-    passengerPhone: '9876543210',
-    journeyDate: '2026-07-15',
-    seatNumber: 'B3-14 (Lower Berth)',
-    status: 'Confirmed',
-    fare: 2450
-  },
-  {
-    id: 'B1002',
-    pnr: '8392019482',
-    trainId: 'T102',
-    trainName: 'Shatabdi Express',
-    trainNumber: '12004',
-    source: 'New Delhi (NDLS)',
-    destination: 'Lucknow Charbagh (LKO)',
-    passengerName: 'Sarah Smith',
-    passengerAge: 28,
-    passengerGender: 'Female',
-    passengerPhone: '9123456789',
-    journeyDate: '2026-07-18',
-    seatNumber: 'C1-45 (Chair)',
-    status: 'Waiting',
-    fare: 1150
-  }
-];
+// Helper to map join query rows to frontend objects
+const mapDbBookingToFrontend = (r) => {
+  return {
+    id: r.pnr.toString(),
+    pnr: r.pnr.toString(),
+    trainId: r.train_no.toString(),
+    trainName: r.train_name || 'Special Express',
+    trainNumber: r.train_no.toString(),
+    source: r.source || 'Station A',
+    destination: r.destination || 'Station B',
+    passengerName: r.passengerName,
+    passengerAge: r.passengerAge,
+    passengerGender: r.passengerGender,
+    journeyDate: r.journey_date ? new Date(r.journey_date).toISOString().split('T')[0] : '',
+    seatNumber: r.seat_no ? `Seat ${r.seat_no}` : 'N/A',
+    status: r.status || 'Confirmed',
+    fare: parseFloat(r.fare || 1000)
+  };
+};
 
 // GET /api/bookings
 const getBookings = async (req, res) => {
   try {
-    console.log('[BOOKINGS] Fetching bookings registry');
+    console.log('[DATABASE] Fetching bookings registry from MySQL...');
     
-    // In a real application, we might filter by user: req.user.id
-    // But since this is a demonstration, we will return all bookings.
+    // Join query over Tickets, Passengers, and Trains to fetch complete booking data
+    const [rows] = await db.query(`
+      SELECT 
+        t.PNR_No AS pnr,
+        t.Passenger_ID AS passenger_id,
+        t.Train_No AS train_no,
+        t.Journey_Date AS journey_date,
+        t.Seat_No AS seat_no,
+        t.Fare AS fare,
+        t.Status AS status,
+        p.Name AS passengerName,
+        p.Age AS passengerAge,
+        p.Gender AS passengerGender,
+        tr.Train_Name AS train_name,
+        tr.Source_Station AS source,
+        tr.Destination_Station AS destination
+      FROM Tickets t
+      LEFT JOIN Passengers p ON t.Passenger_ID = p.Passenger_ID
+      LEFT JOIN Trains tr ON t.Train_No = tr.Train_No
+      ORDER BY t.PNR_No DESC
+    `);
+
+    const bookings = rows.map(mapDbBookingToFrontend);
+
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
-      bookings: mockBookings
+      message: 'Bookings successfully fetched from MySQL',
+      bookings: bookings
     });
   } catch (error) {
+    console.error('[DATABASE ERROR] getBookings failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to retrieve bookings from database.',
+      error: error.message
     });
   }
 };
 
 // POST /api/bookings
 const createBooking = async (req, res) => {
+  const connection = await db.getConnection();
   try {
-    const { trainId, passengerName, passengerAge, passengerGender, passengerPhone, journeyDate } = req.body;
-    
-    console.log(`[BOOKINGS] Reservation request: Train=${trainId}, Name=${passengerName}`);
+    const { trainId, passengerName, passengerAge, passengerGender, journeyDate } = req.body;
+    console.log(`[DATABASE] Creating booking in MySQL for Train=${trainId}, Passenger=${passengerName}`);
 
-    if (!trainId || !passengerName || !passengerAge || !passengerGender || !passengerPhone || !journeyDate) {
+    if (!trainId || !passengerName || !passengerAge || !passengerGender || !journeyDate) {
       return res.status(400).json({
         success: false,
-        message: 'All booking fields (trainId, passengerName, passengerAge, passengerGender, passengerPhone, journeyDate) are required.'
+        message: 'All booking fields (trainId, passengerName, passengerAge, passengerGender, journeyDate) are required.'
       });
     }
 
-    // Resolve train details (name, fare)
-    const train = mockTrains.find(t => t.id === trainId) || {
-      name: 'Special Express',
-      number: '00000',
-      source: 'Custom Station A',
-      destination: 'Custom Station B',
-      fare: 500
-    };
+    const trainNo = parseInt(trainId);
+    
+    // Begin database transaction
+    await connection.beginTransaction();
 
-    // Generate random mock ticket metadata
-    const randomPnr = Math.floor(1000000000 + Math.random() * 9000000000).toString();
-    const mockSeat = `B${Math.floor(Math.random() * 5) + 1}-${Math.floor(Math.random() * 64) + 1}`;
-    const newBookingId = `B${Math.floor(1000 + Math.random() * 9000)}`;
+    // 1. Generate next Passenger_ID (COALESCE handles empty tables)
+    const [[passengerIdRes]] = await connection.query(
+      'SELECT COALESCE(MAX(Passenger_ID), 0) + 1 AS nextId FROM Passengers'
+    );
+    const nextPassengerId = passengerIdRes.nextId;
 
-    const newBooking = {
-      id: newBookingId,
-      pnr: randomPnr,
-      trainId,
-      trainName: train.name,
-      trainNumber: train.number,
-      source: train.source,
-      destination: train.destination,
-      passengerName,
-      passengerAge: parseInt(passengerAge),
-      passengerGender,
-      passengerPhone,
-      journeyDate,
-      seatNumber: mockSeat,
-      status: 'Confirmed',
-      fare: train.fare
-    };
+    // 2. Generate next PNR_No (starts at 5000)
+    const [[pnrRes]] = await connection.query(
+      'SELECT COALESCE(MAX(PNR_No), 5000) + 1 AS nextPnr FROM Tickets'
+    );
+    const nextPnr = pnrRes.nextPnr;
 
-    mockBookings.push(newBooking);
+    // 3. Generate Seat_No (count existing bookings on this date for this train + 1)
+    const [[seatsRes]] = await connection.query(
+      'SELECT COUNT(*) AS booked FROM Tickets WHERE Train_No = ? AND Journey_Date = ?',
+      [trainNo, journeyDate]
+    );
+    const nextSeatNo = seatsRes.booked + 1;
+
+    // 4. Resolve Train details and fare
+    const defaultFares = { 101: 1500, 102: 1300, 103: 1800, 104: 900, 105: 1200 };
+    const fare = defaultFares[trainNo] || 1000;
+
+    // 5. Insert Passenger details
+    await connection.query(
+      'INSERT INTO Passengers (Passenger_ID, Name, Age, Gender) VALUES (?, ?, ?, ?)',
+      [nextPassengerId, passengerName, parseInt(passengerAge), passengerGender]
+    );
+
+    // 6. Insert Ticket details. Status is sent as NULL so that the MySQL trigger (trg_ticket_status) 
+    //    can automatically assign 'Confirmed' or 'Waiting' based on seat availability!
+    await connection.query(
+      'INSERT INTO Tickets (PNR_No, Train_No, Passenger_ID, Journey_Date, Seat_No, Fare, Status) VALUES (?, ?, ?, ?, ?, ?, NULL)',
+      [nextPnr, trainNo, nextPassengerId, journeyDate, nextSeatNo, fare]
+    );
+
+    // Commit Transaction
+    await connection.commit();
+
+    // 7. Fetch the newly created booking joining the fields (showing the status updated by the SQL trigger)
+    const [[newBooking]] = await db.query(`
+      SELECT 
+        t.PNR_No AS pnr,
+        t.Passenger_ID AS passenger_id,
+        t.Train_No AS train_no,
+        t.Journey_Date AS journey_date,
+        t.Seat_No AS seat_no,
+        t.Fare AS fare,
+        t.Status AS status,
+        p.Name AS passengerName,
+        p.Age AS passengerAge,
+        p.Gender AS passengerGender,
+        tr.Train_Name AS train_name,
+        tr.Source_Station AS source,
+        tr.Destination_Station AS destination
+      FROM Tickets t
+      LEFT JOIN Passengers p ON t.Passenger_ID = p.Passenger_ID
+      LEFT JOIN Trains tr ON t.Train_No = tr.Train_No
+      WHERE t.PNR_No = ?
+    `, [nextPnr]);
+
+    const result = mapDbBookingToFrontend(newBooking);
 
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
-      booking: newBooking
+      message: 'Booking successfully stored in MySQL database',
+      booking: result
     });
   } catch (error) {
+    // Rollback transaction on failure
+    await connection.rollback();
+    console.error('[DATABASE ERROR] createBooking transaction failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to store booking in database.',
+      error: error.message
     });
+  } finally {
+    connection.release();
   }
 };
 
@@ -131,33 +173,58 @@ const createBooking = async (req, res) => {
 const cancelBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`[BOOKINGS] Request to cancel booking ID: ${id}`);
+    const pnrNo = parseInt(id);
+    
+    console.log(`[DATABASE] Cancelling booking PNR in MySQL: ${pnrNo}`);
 
-    const bookingIndex = mockBookings.findIndex(b => b.id === id);
+    // Update status in Tickets table to 'Cancelled'
+    const [result] = await db.query(
+      'UPDATE Tickets SET Status = "Cancelled" WHERE PNR_No = ?',
+      [pnrNo]
+    );
 
-    if (bookingIndex === -1) {
+    if (result.affectedRows === 0) {
       return res.status(404).json({
         success: false,
-        message: `Booking with ID ${id} not found.`
+        message: `Ticket with PNR ${pnrNo} not found.`
       });
     }
 
-    // Mark as Cancelled or remove it. Let's mark as Cancelled for richer status details:
-    mockBookings[bookingIndex].status = 'Cancelled';
-    const cancelledBooking = mockBookings[bookingIndex];
+    // Retrieve the updated cancelled ticket
+    const [[cancelledRow]] = await db.query(`
+      SELECT 
+        t.PNR_No AS pnr,
+        t.Passenger_ID AS passenger_id,
+        t.Train_No AS train_no,
+        t.Journey_Date AS journey_date,
+        t.Seat_No AS seat_no,
+        t.Fare AS fare,
+        t.Status AS status,
+        p.Name AS passengerName,
+        p.Age AS passengerAge,
+        p.Gender AS passengerGender,
+        tr.Train_Name AS train_name,
+        tr.Source_Station AS source,
+        tr.Destination_Station AS destination
+      FROM Tickets t
+      LEFT JOIN Passengers p ON t.Passenger_ID = p.Passenger_ID
+      LEFT JOIN Trains tr ON t.Train_No = tr.Train_No
+      WHERE t.PNR_No = ?
+    `, [pnrNo]);
 
-    // Alternatively, we could filter it out:
-    // mockBookings = mockBookings.filter(b => b.id !== id);
+    const bookingResult = mapDbBookingToFrontend(cancelledRow);
 
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
-      booking: cancelledBooking
+      message: 'Booking successfully updated to Cancelled in MySQL database',
+      booking: bookingResult
     });
   } catch (error) {
+    console.error('[DATABASE ERROR] cancelBooking failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to cancel booking in database.',
+      error: error.message
     });
   }
 };

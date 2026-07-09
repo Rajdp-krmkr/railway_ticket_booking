@@ -1,112 +1,70 @@
 // ==========================================================
-// TRAIN CONTROLLER (DUMMY/PLACEHOLDER)
+// TRAIN CONTROLLER (MYSQL DIRECT INTEGRATION)
 // ==========================================================
 
-// TODO:
-// Fetch data from RailwayDB
-// Replace this mock data and static responses with database query actions.
+const db = require('../config/db');
 
-// Mock train database
-const mockTrains = [
-  {
-    id: 'T101',
-    name: 'Rajdhani Express',
-    number: '12429',
-    source: 'New Delhi (NDLS)',
-    destination: 'Mumbai Central (MMCT)',
-    departure: '16:55',
-    arrival: '08:35',
-    duration: '15h 40m',
-    availableSeats: 45,
-    fare: 2450,
-    classes: ['AC 1st Class (1A)', 'AC 2-Tier (2A)', 'AC 3-Tier (3A)'],
-    runsOn: ['Mon', 'Wed', 'Fri']
-  },
-  {
-    id: 'T102',
-    name: 'Shatabdi Express',
-    number: '12004',
-    source: 'New Delhi (NDLS)',
-    destination: 'Lucknow Charbagh (LKO)',
-    departure: '06:10',
-    arrival: '12:40',
-    duration: '06h 30m',
-    availableSeats: 82,
-    fare: 1150,
-    classes: ['AC Chair Car (CC)', 'Exec. Chair Car (EC)'],
-    runsOn: ['Tue', 'Wed', 'Thu', 'Sat', 'Sun']
-  },
-  {
-    id: 'T103',
-    name: 'Duronto Express',
-    number: '12260',
-    source: 'Howrah Junction (HWH)',
-    destination: 'New Delhi (NDLS)',
-    departure: '16:15',
-    arrival: '10:30',
-    duration: '18h 15m',
-    availableSeats: 12,
-    fare: 2100,
-    classes: ['AC 3-Tier (3A)', 'AC 2-Tier (2A)', 'Sleeper Class (SL)'],
-    runsOn: ['Tue', 'Thu', 'Sat']
-  },
-  {
-    id: 'T104',
-    name: 'Garib Rath',
-    number: '12910',
-    source: 'Hazrat Nizamuddin (NZM)',
-    destination: 'Bandra Terminus (BDTS)',
-    departure: '15:55',
-    arrival: '08:10',
-    duration: '16h 15m',
-    availableSeats: 120,
-    fare: 750,
-    classes: ['AC 3-Tier (3A)'],
-    runsOn: ['Wed', 'Fri', 'Sun']
-  },
-  {
-    id: 'T105',
-    name: 'Deccan Queen',
-    number: '12124',
-    source: 'Pune Junction (PUNE)',
-    destination: 'Mumbai CSMT (CSMT)',
-    departure: '07:15',
-    arrival: '10:25',
-    duration: '03h 10m',
-    availableSeats: 250,
-    fare: 350,
-    classes: ['CC (Chair Car)', 'Sleeper Class (SL)'],
+/**
+ * Helper function to map MySQL `trains` row schema to 
+ * the keys and properties expected by the React frontend interface.
+ */
+const mapDbTrainToFrontend = (t) => {
+  // Fares aligned with the existing ticket records in the database
+  const defaultFares = {
+    101: 1500,
+    102: 1300,
+    103: 1800,
+    104: 900,
+    105: 1200
+  };
+
+  // Schedule times aligned with typical routes
+  const defaultTimes = {
+    101: { dep: '16:55', arr: '08:35', dur: '15h 40m' },
+    102: { dep: '06:10', arr: '12:40', dur: '06h 30m' },
+    103: { dep: '16:15', arr: '10:30', dur: '18h 15m' },
+    104: { dep: '15:55', arr: '08:10', dur: '16h 15m' },
+    105: { dep: '07:15', arr: '10:25', dur: '03h 10m' }
+  };
+
+  const trainNo = t.Train_No;
+  const time = defaultTimes[trainNo] || { dep: '08:00', arr: '16:00', dur: '08h 00m' };
+
+  return {
+    id: trainNo.toString(),
+    name: t.Train_Name,
+    number: trainNo.toString(),
+    source: t.Source_Station,
+    destination: t.Destination_Station,
+    departure: time.dep,
+    arrival: time.arr,
+    duration: time.dur,
+    availableSeats: t.Total_Seats || 100,
+    fare: defaultFares[trainNo] || 1000,
+    classes: ['AC 3-Tier (3A)', 'Sleeper Class (SL)'],
     runsOn: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  },
-  {
-    id: 'T106',
-    name: 'Karnataka Express',
-    number: '12628',
-    source: 'New Delhi (NDLS)',
-    destination: 'Bengaluru City (SBC)',
-    departure: '20:15',
-    arrival: '13:40',
-    duration: '41h 25m',
-    availableSeats: 35,
-    fare: 3100,
-    classes: ['AC 2-Tier (2A)', 'AC 3-Tier (3A)', 'Sleeper Class (SL)'],
-    runsOn: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  }
-];
+  };
+};
 
 // GET /api/trains
 const getAllTrains = async (req, res) => {
   try {
-    console.log('[TRAINS] Fetching all trains');
+    console.log('[DATABASE] Fetching all trains from MySQL...');
+    const [rows] = await db.query('SELECT * FROM trains');
+    
+    const mappedTrains = rows.map(mapDbTrainToFrontend);
+
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
-      trains: mockTrains
+      message: 'Data successfully fetched from MySQL database',
+      trains: mappedTrains
     });
   } catch (error) {
+    console.error('[DATABASE ERROR] getAllTrains failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to retrieve trains from database.',
+      error: error.message
     });
   }
 };
@@ -114,49 +72,38 @@ const getAllTrains = async (req, res) => {
 // GET /api/trains/search
 const searchTrains = async (req, res) => {
   try {
-    const { source, destination, date } = req.query;
-    console.log(`[TRAINS] Search criteria: Source=${source}, Destination=${destination}, Date=${date}`);
+    const { source, destination } = req.query;
+    console.log(`[DATABASE] Searching trains in MySQL: Source=${source}, Destination=${destination}`);
 
-    // Standardize inputs for case-insensitive partial match
-    const srcQuery = source ? source.toLowerCase().trim() : '';
-    const destQuery = destination ? destination.toLowerCase().trim() : '';
-
-    // Filter mock trains that match source and destination keywords
-    let results = mockTrains.filter(t => {
-      const matchSrc = srcQuery ? t.source.toLowerCase().includes(srcQuery) : true;
-      const matchDest = destQuery ? t.destination.toLowerCase().includes(destQuery) : true;
-      return matchSrc && matchDest;
-    });
-
-    // If search results are empty, provide a few mock results anyway to show functionality
-    if (results.length === 0 && srcQuery && destQuery) {
-      results = [
-        {
-          id: 'T-MOCK',
-          name: `Custom Route Train (${source} to ${destination})`,
-          number: '19999',
-          source: source,
-          destination: destination,
-          departure: '10:00',
-          arrival: '18:00',
-          duration: '08h 00m',
-          availableSeats: 60,
-          fare: 550,
-          classes: ['AC 3-Tier (3A)', 'Sleeper Class (SL)'],
-          runsOn: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        }
-      ];
+    // If source or destination are not provided, return empty
+    if (!source || !destination) {
+      return res.json({
+        success: true,
+        trains: []
+      });
     }
+
+    const srcPattern = `%${source.toLowerCase().trim()}%`;
+    const destPattern = `%${destination.toLowerCase().trim()}%`;
+
+    const [rows] = await db.query(
+      'SELECT * FROM trains WHERE LOWER(Source_Station) LIKE ? AND LOWER(Destination_Station) LIKE ?',
+      [srcPattern, destPattern]
+    );
+
+    const mappedTrains = rows.map(mapDbTrainToFrontend);
 
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
-      trains: results
+      message: 'Search query fetched from MySQL database',
+      trains: mappedTrains
     });
   } catch (error) {
+    console.error('[DATABASE ERROR] searchTrains failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Search query failed on database.',
+      error: error.message
     });
   }
 };
@@ -165,26 +112,30 @@ const searchTrains = async (req, res) => {
 const getTrainById = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`[TRAINS] Fetching train details for ID: ${id}`);
+    console.log(`[DATABASE] Fetching train details from MySQL for ID: ${id}`);
 
-    const train = mockTrains.find(t => t.id === id);
+    const [rows] = await db.query('SELECT * FROM trains WHERE Train_No = ?', [id]);
 
-    if (!train) {
+    if (rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: `Train with ID ${id} not found.`
+        message: `Train with number ${id} not found.`
       });
     }
 
+    const train = mapDbTrainToFrontend(rows[0]);
+
     return res.json({
       success: true,
-      message: 'Replace this with MySQL query',
+      message: 'Train details fetched from MySQL database',
       train: train
     });
   } catch (error) {
+    console.error('[DATABASE ERROR] getTrainById failed:', error);
     res.status(500).json({
       success: false,
-      message: error.message
+      message: 'Failed to retrieve train details.',
+      error: error.message
     });
   }
 };
@@ -193,5 +144,5 @@ module.exports = {
   getAllTrains,
   searchTrains,
   getTrainById,
-  mockTrains // exported for use in booking calculations if needed
+  mapDbTrainToFrontend // exported for code reuse
 };
