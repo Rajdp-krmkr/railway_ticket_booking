@@ -19,8 +19,8 @@ const MainLayout = ({ children }) => {
   const navLinks = [
     { name: 'Home', path: '/', icon: Train },
     { name: 'Search Trains', path: '/search', icon: Train },
-    { name: 'About', path: '/about', icon: Info },
-    { name: 'Contact', path: '/contact', icon: Mail },
+    // { name: 'About', path: '/about', icon: Info },
+    // { name: 'Contact', path: '/contact', icon: Mail },
   ];
 
   return (
